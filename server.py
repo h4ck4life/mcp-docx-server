@@ -121,6 +121,88 @@ def create_document(doc_id: str, title: str = "New Document") -> str:
         return f"Error creating document: {str(e)}"
 
 @mcp.tool()
+def create_complete_document(doc_id: str, title: str = "New Document", content: list = None) -> str:
+    """Creates a new Word document with title and content in a single operation.
+    
+    This tool simplifies document creation by allowing you to provide a title and
+    multiple content elements in a single call. Each content element is a dictionary
+    that specifies the type and text, along with any additional formatting options.
+    
+    Content types:
+    - "heading": Adds a heading with specified level (0-4)
+    - "paragraph": Adds a paragraph with optional style
+    - "table": Adds a table with specified rows, columns, and comma-separated data
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        title (str): The document title.
+        content (list): A list of content dictionaries. Each dictionary must have:
+                      - "type": The content type ("heading", "paragraph", "table")
+                      - "text": The content text
+                      - Other optional keys depending on the type
+    
+    Example content list:
+    [
+        {"type": "heading", "text": "Introduction", "level": 1},
+        {"type": "paragraph", "text": "This is a sample paragraph."},
+        {"type": "heading", "text": "Data", "level": 2},
+        {"type": "table", "rows": 2, "cols": 2, "data": "A,B,C,D"}
+    ]
+    
+    Returns:
+        str: A message indicating success or failure of the document creation.
+    """
+    try:
+        # Create a new document
+        document = Document()
+        
+        # Add the title
+        document.add_heading(title, 0)
+        
+        # Add content if provided
+        if content:
+            for item in content:
+                content_type = item.get("type", "").lower()
+                text = item.get("text", "")
+                
+                if content_type == "heading":
+                    level = item.get("level", 1)
+                    document.add_heading(text, level)
+                    
+                elif content_type == "paragraph":
+                    style = item.get("style")
+                    if style:
+                        try:
+                            document.add_paragraph(text, style=style)
+                        except KeyError:
+                            document.add_paragraph(text)
+                    else:
+                        document.add_paragraph(text)
+                        
+                elif content_type == "table":
+                    rows = item.get("rows", 1)
+                    cols = item.get("cols", 1)
+                    data = item.get("data", "")
+                    
+                    table = document.add_table(rows=rows, cols=cols)
+                    data_list = data.split(',')
+                    
+                    if len(data_list) != rows * cols:
+                        return f"Error in table data: Number of data elements ({len(data_list)}) does not match table dimensions ({rows}x{cols})."
+                    
+                    for i in range(rows):
+                        for j in range(cols):
+                            table.cell(i, j).text = data_list[i * cols + j].strip()
+        
+        # Save the document
+        doc_path = get_document_path(doc_id)
+        document.save(doc_path)
+        
+        return f"Document '{doc_id}.docx' created successfully with title and {len(content) if content else 0} content items at path: {os.path.abspath(doc_path)}"
+    except Exception as e:
+        return f"Error creating document: {str(e)}"
+
+@mcp.tool()
 def list_available_documents() -> str:
     """Lists all Word documents (.docx files) available in the server directory."""
     try:
@@ -364,7 +446,24 @@ Example: To read a file named "bitcoin_overview.docx":
 - Request the resource: `word://bitcoin_overview/content`
 - Or call: `read_document("bitcoin_overview")`
 
-## Creating and Modifying Documents
+## Creating Documents
+### Quick Method (All-in-One)
+Use the comprehensive creation function that handles multiple content elements in one call:
+
+```python
+create_complete_document(
+    "my_document", 
+    "Document Title",
+    [
+        {"type": "heading", "text": "Introduction", "level": 1},
+        {"type": "paragraph", "text": "This is the first paragraph."},
+        {"type": "heading", "text": "Data Section", "level": 2},
+        {"type": "table", "rows": 2, "cols": 2, "data": "A,B,C,D"}
+    ]
+)
+```
+
+### Step-by-Step Method
 1. First create a document: `create_document("my_doc", "My Document Title")`
 2. Add content using any of these tools:
    - `add_paragraph("my_doc", "This is a paragraph of text")`
@@ -375,6 +474,15 @@ Example: To read a file named "bitcoin_overview.docx":
 ## Formatting Content
 - Set alignment: `set_paragraph_alignment("my_doc", 1, "CENTER")` (options: LEFT, CENTER, RIGHT, JUSTIFY)
 - Set font properties: `set_paragraph_font("my_doc", 1, font_name="Arial", font_size=12, bold=True)`
+
+## Converting to PDF
+To convert a Word document to PDF format:
+- `convert_to_pdf("my_document")` - This will create a PDF with the same name in the server directory
+
+## Utility Functions
+- Check if a document exists: `check_document_exists("my_document")`
+- List all available documents: `list_available_documents()`
+- List available styles in a document: `list_styles("my_document")`
 
 ## Tips for Working with Word Documents
 - Check if a document exists before trying to modify it

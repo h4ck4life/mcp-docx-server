@@ -2,3 +2,4 @@
 __pycache__
 mcp_docx_server.egg-info
 *.docx
+*.pdf
