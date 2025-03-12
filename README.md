@@ -15,7 +15,7 @@ This is the MCP DOCX Server. Below is an example configuration to run the server
         "mcp[cli],python-docx",
         "mcp",
         "run",
-        "/Volumes/TRANSCEND/dev/mcp-docx-server/server.py"
+        "<your local path>/mcp-docx-server/server.py"
       ]
     }
   }
