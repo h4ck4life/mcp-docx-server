@@ -118,6 +118,20 @@ def create_document(doc_id: str, title: str = "New Document") -> str:
     except Exception as e:
         return f"Error creating document: {str(e)}"
 
+@mcp.tool()
+def list_available_documents() -> str:
+    """Lists all Word documents (.docx files) available in the server directory."""
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        docx_files = [f.replace('.docx', '') for f in os.listdir(script_dir) if f.endswith('.docx')]
+        
+        if not docx_files:
+            return "No Word documents (.docx files) found in the server directory."
+        
+        doc_list = "\n".join([f"- {doc}" for doc in docx_files])
+        return f"Available Word documents (without .docx extension):\n{doc_list}"
+    except Exception as e:
+        return f"Error listing documents: {str(e)}"
 
 @mcp.tool()
 def add_paragraph(doc_id: str, text: str, style: str = None) -> str:
@@ -302,6 +316,44 @@ def list_styles(doc_id: str) -> str:
         return str(e)
     except Exception as e:
         return f"Error listing styles: {str(e)}"
+
+@mcp.prompt()
+def word_document_usage() -> str:
+    """Provides guidance on how to use this MCP server with Word documents."""
+    return """
+# Word Document Server Usage Guide
+
+This server allows you to create, read, and manipulate Microsoft Word (.docx) documents. Here's how to use it effectively:
+
+## Reading Documents
+To read an existing document:
+- Use the resource: `word://document_name/content` (replace "document_name" with the filename without .docx extension)
+- Or call the tool: `read_document("document_name")`
+
+Example: To read a file named "bitcoin_overview.docx":
+- Request the resource: `word://bitcoin_overview/content`
+- Or call: `read_document("bitcoin_overview")`
+
+## Creating and Modifying Documents
+1. First create a document: `create_document("my_doc", "My Document Title")`
+2. Add content using any of these tools:
+   - `add_paragraph("my_doc", "This is a paragraph of text")`
+   - `add_heading("my_doc", "Section Heading", 1)` (levels 0-4, where 0 is title)
+   - `add_table("my_doc", 3, 3, "Cell 1,Cell 2,Cell 3,Cell 4,Cell 5,Cell 6,Cell 7,Cell 8,Cell 9")`
+   - `add_image("my_doc", base64_image_data, "image.png", 4.0)`
+
+## Formatting Content
+- Set alignment: `set_paragraph_alignment("my_doc", 1, "CENTER")` (options: LEFT, CENTER, RIGHT, JUSTIFY)
+- Set font properties: `set_paragraph_font("my_doc", 1, font_name="Arial", font_size=12, bold=True)`
+
+## Tips for Working with Word Documents
+- Check if a document exists before trying to modify it
+- Use paragraph indexes carefully (they start at 0)
+- Remember that changes are saved immediately
+- Word styles can be used for consistent formatting
+
+Remember to check the document path returned by create_document() to know where your files are stored.
+"""
 
 if __name__ == "__main__":
     mcp.run()
