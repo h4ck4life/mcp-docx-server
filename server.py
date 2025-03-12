@@ -6,6 +6,8 @@ from docx.enum.style import WD_STYLE_TYPE
 from io import BytesIO
 import base64
 import os
+from docx2pdf import convert
+import tempfile
 
 # Create an MCP server specifically for Word document operations
 mcp = FastMCP("WordDocServer", 
@@ -316,6 +318,34 @@ def list_styles(doc_id: str) -> str:
         return str(e)
     except Exception as e:
         return f"Error listing styles: {str(e)}"
+
+@mcp.tool()
+def convert_to_pdf(doc_id: str) -> str:
+    """Converts a Word document to PDF format.
+    
+    This tool converts a .docx file to PDF and saves it in the same directory
+    with the same name but .pdf extension.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        
+    Returns:
+        str: A message indicating success or failure of the conversion.
+    """
+    try:
+        doc_path = get_document_path(doc_id)
+        if not os.path.exists(doc_path):
+            return f"Error: Document '{doc_id}.docx' not found."
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        pdf_path = os.path.join(script_dir, f"{doc_id}.pdf")
+        
+        # Convert docx to PDF
+        convert(doc_path, pdf_path)
+        
+        return f"Document successfully converted to PDF at: {os.path.abspath(pdf_path)}"
+    except Exception as e:
+        return f"Error converting document to PDF: {str(e)}"
 
 @mcp.prompt()
 def word_document_usage() -> str:
