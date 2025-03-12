@@ -21,3 +21,7 @@ This is the MCP docx server. It is used to manipulate DOCX files, including crea
   }
 }
 ```
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for details.
