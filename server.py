@@ -8,6 +8,7 @@ from io import BytesIO
 import base64
 import os
 from docx2pdf import convert
+from docx.enum.section import WD_SECTION, WD_ORIENT
 
 # Create an MCP server specifically for Word document operations
 mcp = FastMCP("WordDocServer", 
@@ -347,6 +348,207 @@ def append_to_document(doc_id: str, content: list) -> str:
 def replace_document(doc_id: str, title: str = None, content: list = None) -> str:
     """Replaces an existing Word document with new content."""
     return update_document(doc_id, title=title, content=content, append=False)
+
+@mcp.tool()
+def add_section(doc_id: str, start_type: str = "NEW_PAGE") -> str:
+    """Adds a new section to the end of a document.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        start_type (str): The type of section break, one of:
+            - "NEW_PAGE" (default) - Start the section on a new page
+            - "EVEN_PAGE" - Start the section on the next even-numbered page
+            - "ODD_PAGE" - Start the section on the next odd-numbered page
+            - "CONTINUOUS" - No page break, continue on same page
+    
+    Returns:
+        str: A message indicating success or failure.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        # Map string values to WD_SECTION enum
+        section_types = {
+            "NEW_PAGE": WD_SECTION.NEW_PAGE,
+            "EVEN_PAGE": WD_SECTION.EVEN_PAGE, 
+            "ODD_PAGE": WD_SECTION.ODD_PAGE,
+            "CONTINUOUS": WD_SECTION.CONTINUOUS
+        }
+        
+        # Get the section type value
+        section_type = section_types.get(start_type.upper())
+        if not section_type:
+            return f"Error: Invalid section start type '{start_type}'. Valid values are: {', '.join(section_types.keys())}"
+        
+        # Add the new section
+        document.add_section(section_type)
+        
+        doc_path = get_document_path(doc_id)
+        document.save(doc_path)
+        return f"Section with start type '{start_type}' added successfully."
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error adding section: {str(e)}"
+
+@mcp.tool()
+def list_sections(doc_id: str) -> str:
+    """Lists all sections in a document with their properties.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+    
+    Returns:
+        str: Information about each section in the document.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections:
+            return f"No sections found in document '{doc_id}.docx'."
+        
+        sections_info = []
+        for i, section in enumerate(document.sections):
+            # Map orientation value to readable string
+            orientation = "PORTRAIT" if section.orientation == WD_ORIENT.PORTRAIT else "LANDSCAPE"
+            
+            # Convert dimensions to inches for readability
+            page_width_inches = section.page_width / 914400  # 914400 = 1 inch in EMUs
+            page_height_inches = section.page_height / 914400
+            
+            # Create info string
+            section_info = [
+                f"Section {i}:",
+                f"  Start Type: {section.start_type}",
+                f"  Orientation: {orientation}",
+                f"  Page Size: {page_width_inches:.2f}\" x {page_height_inches:.2f}\"",
+                f"  Margins (inches):",
+                f"    Left: {section.left_margin/914400:.2f}\"",
+                f"    Right: {section.right_margin/914400:.2f}\"",
+                f"    Top: {section.top_margin/914400:.2f}\"",
+                f"    Bottom: {section.bottom_margin/914400:.2f}\"",
+                f"    Gutter: {section.gutter/914400:.2f}\"",
+                f"    Header Distance: {section.header_distance/914400:.2f}\"",
+                f"    Footer Distance: {section.footer_distance/914400:.2f}\""
+            ]
+            sections_info.append("\n".join(section_info))
+        
+        return "\n\n".join(sections_info)
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error listing sections: {str(e)}"
+
+@mcp.tool()
+def set_section_properties(doc_id: str, section_index: int, properties: dict) -> str:
+    """Sets properties for a specific section in the document.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section to modify (0-based).
+        properties (dict): Dictionary with section properties:
+            - start_type: Section break type ("NEW_PAGE", "EVEN_PAGE", "ODD_PAGE", "CONTINUOUS")
+            - orientation: "PORTRAIT" or "LANDSCAPE"
+            - page_width: Page width in inches
+            - page_height: Page height in inches
+            - left_margin, right_margin, top_margin, bottom_margin: Margins in inches
+            - gutter: Gutter margin in inches
+            - header_distance, footer_distance: Header/footer distance in inches
+    
+    Returns:
+        str: A message indicating success or failure.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections or section_index >= len(document.sections):
+            return f"Error: Section index {section_index} is out of range. Document has {len(document.sections) if document.sections else 0} sections."
+        
+        section = document.sections[section_index]
+        
+        # Handle start_type
+        if "start_type" in properties:
+            start_type = properties["start_type"].upper()
+            section_types = {
+                "NEW_PAGE": WD_SECTION.NEW_PAGE,
+                "EVEN_PAGE": WD_SECTION.EVEN_PAGE, 
+                "ODD_PAGE": WD_SECTION.ODD_PAGE,
+                "CONTINUOUS": WD_SECTION.CONTINUOUS
+            }
+            if start_type in section_types:
+                section.start_type = section_types[start_type]
+            else:
+                return f"Error: Invalid section start type '{start_type}'. Valid values are: {', '.join(section_types.keys())}"
+        
+        # Handle orientation
+        if "orientation" in properties:
+            orientation = properties["orientation"].upper()
+            if orientation == "LANDSCAPE":
+                # If changing to landscape, may need to swap width and height
+                if section.orientation == WD_ORIENT.PORTRAIT:
+                    # Store current dimensions before changing orientation
+                    old_width, old_height = section.page_width, section.page_height
+                    # Set orientation first
+                    section.orientation = WD_ORIENT.LANDSCAPE
+                    # If page dimensions are not explicitly set in properties, swap them
+                    if "page_width" not in properties and "page_height" not in properties:
+                        section.page_width, section.page_height = old_height, old_width
+                else:
+                    # Already landscape, just ensure orientation is set
+                    section.orientation = WD_ORIENT.LANDSCAPE
+            elif orientation == "PORTRAIT":
+                # If changing to portrait, may need to swap width and height
+                if section.orientation == WD_ORIENT.LANDSCAPE:
+                    # Store current dimensions before changing orientation
+                    old_width, old_height = section.page_width, section.page_height
+                    # Set orientation first
+                    section.orientation = WD_ORIENT.PORTRAIT
+                    # If page dimensions are not explicitly set in properties, swap them
+                    if "page_width" not in properties and "page_height" not in properties:
+                        section.page_width, section.page_height = old_height, old_width
+                else:
+                    # Already portrait, just ensure orientation is set
+                    section.orientation = WD_ORIENT.PORTRAIT
+            else:
+                return f"Error: Invalid orientation '{orientation}'. Valid values are: PORTRAIT, LANDSCAPE"
+        
+        # Handle page dimensions (after orientation changes, if any)
+        if "page_width" in properties:
+            section.page_width = int(float(properties["page_width"]) * 914400)  # Convert inches to EMUs
+        
+        if "page_height" in properties:
+            section.page_height = int(float(properties["page_height"]) * 914400)  # Convert inches to EMUs
+        
+        # Handle margins
+        for margin_prop in ["left_margin", "right_margin", "top_margin", "bottom_margin", 
+                           "gutter", "header_distance", "footer_distance"]:
+            if margin_prop in properties:
+                setattr(section, margin_prop, int(float(properties[margin_prop]) * 914400))  # Convert inches to EMUs
+        
+        doc_path = get_document_path(doc_id)
+        document.save(doc_path)
+        return f"Properties for section {section_index} updated successfully."
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error setting section properties: {str(e)}"
+
+@mcp.tool()
+def change_page_orientation(doc_id: str, section_index: int, orientation: str) -> str:
+    """Changes the page orientation for a specific section.
+    
+    This is a convenience function that wraps set_section_properties for
+    the common task of changing page orientation.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section to modify (0-based).
+        orientation (str): "PORTRAIT" or "LANDSCAPE"
+    
+    Returns:
+        str: A message indicating success or failure.
+    """
+    return set_section_properties(doc_id, section_index, {"orientation": orientation})
 
 # Individual content addition operations
 @mcp.tool()
@@ -751,6 +953,476 @@ def list_styles(doc_id: str) -> str:
         return f"Error listing styles: {str(e)}"
 
 @mcp.tool()
+def add_header(doc_id: str, section_index: int, text: str = None, content: list = None) -> str:
+    """Adds or modifies a header for a specific section.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section to add a header to (0-based).
+        text (str, optional): Simple text to add to the header.
+        content (list, optional): Complex content for the header, following the same format
+                                 as document content in create_complete_document.
+                                 
+    Returns:
+        str: A message indicating success or failure.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections or section_index >= len(document.sections):
+            return f"Error: Section index {section_index} is out of range. Document has {len(document.sections) if document.sections else 0} sections."
+        
+        section = document.sections[section_index]
+        header = section.header
+        
+        # Unlink from previous if it's currently linked
+        if header.is_linked_to_previous:
+            header.is_linked_to_previous = False
+        
+        # Clear existing content
+        for paragraph in header.paragraphs[1:]:
+            p = paragraph._element
+            p.getparent().remove(p)
+        
+        # If first paragraph exists, use it, otherwise add one
+        if header.paragraphs:
+            first_paragraph = header.paragraphs[0]
+            if text:
+                first_paragraph.text = text
+            else:
+                first_paragraph.text = ""
+        else:
+            if text:
+                header.paragraphs[0].text = text
+        
+        # If complex content is provided, add it
+        if content:
+            for item in content:
+                content_type = item.get("type", "").lower()
+                item_text = item.get("text", "")
+                
+                if content_type == "paragraph":
+                    style = item.get("style", "Header")
+                    para = header.add_paragraph(item_text)
+                    try:
+                        para.style = style
+                    except:
+                        pass  # Style not found, continue with default
+                    
+                    # Apply formatting if provided
+                    formatting = item.get("formatting", {})
+                    if formatting:
+                        _apply_paragraph_formatting(para, formatting)
+                
+                elif content_type == "table":
+                    rows = item.get("rows", 1)
+                    cols = item.get("cols", 1)
+                    data = item.get("data", "")
+                    
+                    table = header.add_table(rows=rows, cols=cols)
+                    
+                    # Fill with data if provided
+                    if data:
+                        data_list = data.split(',')
+                        
+                        # Pad with empty strings if too few data elements
+                        if len(data_list) < rows * cols:
+                            data_list.extend([''] * (rows * cols - len(data_list)))
+                            
+                        # Fill table cells
+                        for i in range(rows):
+                            for j in range(cols):
+                                cell_idx = i * cols + j
+                                if cell_idx < len(data_list):
+                                    table.cell(i, j).text = data_list[cell_idx].strip()
+        
+        doc_path = get_document_path(doc_id)
+        document.save(doc_path)
+        return f"Header added/modified for section {section_index}."
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error adding header: {str(e)}"
+
+@mcp.tool()
+def add_footer(doc_id: str, section_index: int, text: str = None, content: list = None) -> str:
+    """Adds or modifies a footer for a specific section.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section to add a footer to (0-based).
+        text (str, optional): Simple text to add to the footer.
+        content (list, optional): Complex content for the footer, following the same format
+                                 as document content in create_complete_document.
+                                 
+    Returns:
+        str: A message indicating success or failure.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections or section_index >= len(document.sections):
+            return f"Error: Section index {section_index} is out of range. Document has {len(document.sections) if document.sections else 0} sections."
+        
+        section = document.sections[section_index]
+        footer = section.footer
+        
+        # Unlink from previous if it's currently linked
+        if footer.is_linked_to_previous:
+            footer.is_linked_to_previous = False
+        
+        # Clear existing content
+        for paragraph in footer.paragraphs[1:]:
+            p = paragraph._element
+            p.getparent().remove(p)
+        
+        # If first paragraph exists, use it, otherwise add one
+        if footer.paragraphs:
+            first_paragraph = footer.paragraphs[0]
+            if text:
+                first_paragraph.text = text
+            else:
+                first_paragraph.text = ""
+        else:
+            if text:
+                footer.paragraphs[0].text = text
+        
+        # If complex content is provided, add it
+        if content:
+            for item in content:
+                content_type = item.get("type", "").lower()
+                item_text = item.get("text", "")
+                
+                if content_type == "paragraph":
+                    style = item.get("style", "Footer")
+                    para = footer.add_paragraph(item_text)
+                    try:
+                        para.style = style
+                    except:
+                        pass  # Style not found, continue with default
+                    
+                    # Apply formatting if provided
+                    formatting = item.get("formatting", {})
+                    if formatting:
+                        _apply_paragraph_formatting(para, formatting)
+                
+                elif content_type == "table":
+                    rows = item.get("rows", 1)
+                    cols = item.get("cols", 1)
+                    data = item.get("data", "")
+                    
+                    table = footer.add_table(rows=rows, cols=cols)
+                    
+                    # Fill with data if provided
+                    if data:
+                        data_list = data.split(',')
+                        
+                        # Pad with empty strings if too few data elements
+                        if len(data_list) < rows * cols:
+                            data_list.extend([''] * (rows * cols - len(data_list)))
+                            
+                        # Fill table cells
+                        for i in range(rows):
+                            for j in range(cols):
+                                cell_idx = i * cols + j
+                                if cell_idx < len(data_list):
+                                    table.cell(i, j).text = data_list[cell_idx].strip()
+        
+        doc_path = get_document_path(doc_id)
+        document.save(doc_path)
+        return f"Footer added/modified for section {section_index}."
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error adding footer: {str(e)}"
+
+@mcp.tool()
+def add_zoned_header(doc_id: str, section_index: int, left_text: str = "", center_text: str = "", right_text: str = "") -> str:
+    """Adds a three-zone header with left, center, and right aligned text.
+    
+    This is a convenience function that creates a properly formatted header
+    with text aligned in the left, center, and right zones using tab stops.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section to add a header to (0-based).
+        left_text (str): Text for the left zone.
+        center_text (str): Text for the center zone.
+        right_text (str): Text for the right zone.
+        
+    Returns:
+        str: A message indicating success or failure.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections or section_index >= len(document.sections):
+            return f"Error: Section index {section_index} is out of range. Document has {len(document.sections) if document.sections else 0} sections."
+        
+        section = document.sections[section_index]
+        header = section.header
+        
+        # Unlink from previous if it's currently linked
+        if header.is_linked_to_previous:
+            header.is_linked_to_previous = False
+        
+        # Create the zoned header with tab-separated text
+        header_text = f"{left_text}"
+        if center_text:
+            header_text += f"\t{center_text}"
+            if right_text:
+                header_text += f"\t{right_text}"
+        elif right_text:
+            header_text += f"\t\t{right_text}"
+        
+        # Clear existing content
+        for paragraph in header.paragraphs[1:]:
+            p = paragraph._element
+            p.getparent().remove(p)
+        
+        # Apply the text to the first paragraph
+        if header.paragraphs:
+            paragraph = header.paragraphs[0]
+            paragraph.text = header_text
+            try:
+                paragraph.style = document.styles["Header"]
+            except:
+                pass  # Style not found, continue with default style
+        else:
+            paragraph = header.add_paragraph(header_text)
+            try:
+                paragraph.style = document.styles["Header"]
+            except:
+                pass
+        
+        doc_path = get_document_path(doc_id)
+        document.save(doc_path)
+        return f"Zoned header added for section {section_index}."
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error adding zoned header: {str(e)}"
+
+@mcp.tool()
+def add_zoned_footer(doc_id: str, section_index: int, left_text: str = "", center_text: str = "", right_text: str = "") -> str:
+    """Adds a three-zone footer with left, center, and right aligned text.
+    
+    This is a convenience function that creates a properly formatted footer
+    with text aligned in the left, center, and right zones using tab stops.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section to add a footer to (0-based).
+        left_text (str): Text for the left zone.
+        center_text (str): Text for the center zone.
+        right_text (str): Text for the right zone.
+        
+    Returns:
+        str: A message indicating success or failure.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections or section_index >= len(document.sections):
+            return f"Error: Section index {section_index} is out of range. Document has {len(document.sections) if document.sections else 0} sections."
+        
+        section = document.sections[section_index]
+        footer = section.footer
+        
+        # Unlink from previous if it's currently linked
+        if footer.is_linked_to_previous:
+            footer.is_linked_to_previous = False
+        
+        # Create the zoned footer with tab-separated text
+        footer_text = f"{left_text}"
+        if center_text:
+            footer_text += f"\t{center_text}"
+            if right_text:
+                footer_text += f"\t{right_text}"
+        elif right_text:
+            footer_text += f"\t\t{right_text}"
+        
+        # Clear existing content
+        for paragraph in footer.paragraphs[1:]:
+            p = paragraph._element
+            p.getparent().remove(p)
+        
+        # Apply the text to the first paragraph
+        if footer.paragraphs:
+            paragraph = footer.paragraphs[0]
+            paragraph.text = footer_text
+            try:
+                paragraph.style = document.styles["Footer"]
+            except:
+                pass  # Style not found, continue with default style
+        else:
+            paragraph = footer.add_paragraph(footer_text)
+            try:
+                paragraph.style = document.styles["Footer"]
+            except:
+                pass
+        
+        doc_path = get_document_path(doc_id)
+        document.save(doc_path)
+        return f"Zoned footer added for section {section_index}."
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error adding zoned footer: {str(e)}"
+
+@mcp.tool()
+def remove_header(doc_id: str, section_index: int) -> str:
+    """Removes the header from a specific section, linking it to the previous section.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section to remove the header from (0-based).
+        
+    Returns:
+        str: A message indicating success or failure.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections or section_index >= len(document.sections):
+            return f"Error: Section index {section_index} is out of range. Document has {len(document.sections) if document.sections else 0} sections."
+        
+        section = document.sections[section_index]
+        header = section.header
+        
+        # Link to previous, which removes this header definition
+        header.is_linked_to_previous = True
+        
+        doc_path = get_document_path(doc_id)
+        document.save(doc_path)
+        return f"Header removed from section {section_index}."
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error removing header: {str(e)}"
+
+@mcp.tool()
+def remove_footer(doc_id: str, section_index: int) -> str:
+    """Removes the footer from a specific section, linking it to the previous section.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section to remove the footer from (0-based).
+        
+    Returns:
+        str: A message indicating success or failure.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections or section_index >= len(document.sections):
+            return f"Error: Section index {section_index} is out of range. Document has {len(document.sections) if document.sections else 0} sections."
+        
+        section = document.sections[section_index]
+        footer = section.footer
+        
+        # Link to previous, which removes this footer definition
+        footer.is_linked_to_previous = True
+        
+        doc_path = get_document_path(doc_id)
+        document.save(doc_path)
+        return f"Footer removed from section {section_index}."
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error removing footer: {str(e)}"
+
+@mcp.tool()
+def get_header_text(doc_id: str, section_index: int) -> str:
+    """Gets the text content of a header for a specific section.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section (0-based).
+        
+    Returns:
+        str: The text content of the header or status message.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections or section_index >= len(document.sections):
+            return f"Error: Section index {section_index} is out of range. Document has {len(document.sections) if document.sections else 0} sections."
+        
+        section = document.sections[section_index]
+        header = section.header
+        
+        if header.is_linked_to_previous:
+            # Find the first previous section with a header definition
+            linked_section_index = section_index
+            while linked_section_index > 0:
+                linked_section_index -= 1
+                prev_header = document.sections[linked_section_index].header
+                if not prev_header.is_linked_to_previous:
+                    return f"Header is linked to section {linked_section_index}. Content: {get_header_text(doc_id, linked_section_index)}"
+            
+            return "No header defined for this section (linked to previous, but no previous header found)."
+        
+        # Header has its own definition, extract the text
+        header_text = []
+        for paragraph in header.paragraphs:
+            header_text.append(paragraph.text)
+        
+        if not header_text:
+            return "Header is defined but contains no text."
+        
+        return "\n".join(header_text)
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error getting header text: {str(e)}"
+
+@mcp.tool()
+def get_footer_text(doc_id: str, section_index: int) -> str:
+    """Gets the text content of a footer for a specific section.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        section_index (int): The index of the section (0-based).
+        
+    Returns:
+        str: The text content of the footer or status message.
+    """
+    try:
+        document = load_document(doc_id)
+        
+        if not document.sections or section_index >= len(document.sections):
+            return f"Error: Section index {section_index} is out of range. Document has {len(document.sections) if document.sections else 0} sections."
+        
+        section = document.sections[section_index]
+        footer = section.footer
+        
+        if footer.is_linked_to_previous:
+            # Find the first previous section with a footer definition
+            linked_section_index = section_index
+            while linked_section_index > 0:
+                linked_section_index -= 1
+                prev_footer = document.sections[linked_section_index].footer
+                if not prev_footer.is_linked_to_previous:
+                    return f"Footer is linked to section {linked_section_index}. Content: {get_footer_text(doc_id, linked_section_index)}"
+            
+            return "No footer defined for this section (linked to previous, but no previous footer found)."
+        
+        # Footer has its own definition, extract the text
+        footer_text = []
+        for paragraph in footer.paragraphs:
+            footer_text.append(paragraph.text)
+        
+        if not footer_text:
+            return "Footer is defined but contains no text."
+        
+        return "\n".join(footer_text)
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error getting footer text: {str(e)}"
+
+@mcp.tool()
 def convert_to_pdf(doc_id: str) -> str:
    """Converts a Word document to PDF format."""
    try:
@@ -870,28 +1542,30 @@ create_complete_document(
         {"type": "table", "rows": 2, "cols": 2, "data": "A,B,C,D", "style": "Table Grid"}
     ]
 )
-```
+Step-by-Step Method
 
-### Step-by-Step Method
-1. First create a document: `create_document("my_doc", "My Document Title")`
-2. Add content using any of these tools:
-   - `add_paragraph("my_doc", "This is a paragraph of text", formatting={"alignment": "CENTER"})`
-   - `add_heading("my_doc", "Section Heading", 1)` (levels 0-4, where 0 is title)
-   - `add_table("my_doc", 3, 3, "Cell 1,Cell 2,Cell 3,Cell 4,Cell 5,Cell 6,Cell 7,Cell 8,Cell 9", "Table Grid")`
-   - `add_image("my_doc", base64_image_data, "image.png", 4.0)`
+First create a document: create_document("my_doc", "My Document Title")
+Add content using any of these tools:
 
-## Updating Documents
-### Append content to existing documents:
-- `append_to_document("my_doc", [{"type": "paragraph", "text": "New content"}])`
+add_paragraph("my_doc", "This is a paragraph of text", formatting={"alignment": "CENTER"})
+add_heading("my_doc", "Section Heading", 1) (levels 0-4, where 0 is title)
+add_table("my_doc", 3, 3, "Cell 1,Cell 2,Cell 3,Cell 4,Cell 5,Cell 6,Cell 7,Cell 8,Cell 9", "Table Grid")
+add_image("my_doc", base64_image_data, "image.png", 4.0)
 
-### Replace existing document:
-- `replace_document("my_doc", "New Title", [{"type": "paragraph", "text": "Replacement content"}])`
 
-## Text Formatting
-### Paragraph Formatting
+Updating Documents
+Append content to existing documents:
+
+append_to_document("my_doc", [{"type": "paragraph", "text": "New content"}])
+
+Replace existing document:
+
+replace_document("my_doc", "New Title", [{"type": "paragraph", "text": "Replacement content"}])
+
+Text Formatting
+Paragraph Formatting
 Set paragraph properties:
-```python
-set_paragraph_properties("my_doc", 1, {
+pythonCopyset_paragraph_properties("my_doc", 1, {
     "alignment": "CENTER",
     "left_indent": 0.5,        # in inches
     "right_indent": 0.5,       # in inches
@@ -904,12 +1578,9 @@ set_paragraph_properties("my_doc", 1, {
     "page_break_before": False,
     "widow_control": True
 })
-```
-
-### Text/Run Formatting
+Text/Run Formatting
 Add formatted text to an existing paragraph:
-```python
-add_formatted_text("my_doc", 1, "This text will be formatted", {
+pythonCopyadd_formatted_text("my_doc", 1, "This text will be formatted", {
     "name": "Arial",          # font name
     "size": 12,               # point size
     "bold": True,             # Boolean
@@ -917,41 +1588,88 @@ add_formatted_text("my_doc", 1, "This text will be formatted", {
     "underline": True,        # Boolean
     "color": "#FF0000"        # hex color or rgb(r,g,b)
 })
-```
-
 Or set properties of an existing text run:
-```python
-set_text_properties("my_doc", 1, 0, {  # paragraph 1, run 0
+pythonCopyset_text_properties("my_doc", 1, 0, {  # paragraph 1, run 0
     "bold": True,
     "color": "rgb(0,0,255)"
 })
-```
+Table Operations
 
-## Table Operations
-- Create tables: `add_table("my_doc", 3, 3, "A,B,C,D,E,F,G,H,I", "Table Grid")`
-- Merge cells: `merge_table_cells("my_doc", 0, 0, 0, 0, 1)` (table 0, from cell (0,0) to (0,1))
-- Get table data: `get_table_data("my_doc", 0)`
-- List tables: `list_tables("my_doc")`
+Create tables: add_table("my_doc", 3, 3, "A,B,C,D,E,F,G,H,I", "Table Grid")
+Merge cells: merge_table_cells("my_doc", 0, 0, 0, 0, 1) (table 0, from cell (0,0) to (0,1))
+Get table data: get_table_data("my_doc", 0)
+List tables: list_tables("my_doc")
 
-## Analyzing Documents
+Section Operations
+Sections define page layout settings like margins and orientation:
+Working with Sections
+
+Add a section: add_section("my_doc", "NEW_PAGE")  # Other options: "EVEN_PAGE", "ODD_PAGE", "CONTINUOUS"
+List sections: list_sections("my_doc")
+Change page orientation: change_page_orientation("my_doc", 0, "LANDSCAPE")  # Change section 0 to landscape
+
+Set Section Properties
+pythonCopyset_section_properties("my_doc", 0, {  # section 0
+    "orientation": "LANDSCAPE",
+    "page_width": 11,         # in inches
+    "page_height": 8.5,       # in inches
+    "left_margin": 1,         # in inches
+    "right_margin": 1,        # in inches
+    "top_margin": 0.75,       # in inches
+    "bottom_margin": 0.75,    # in inches
+    "header_distance": 0.5,   # in inches
+    "footer_distance": 0.5    # in inches
+})
+Headers and Footers
+Headers and footers are linked to sections and provide content that appears at the top/bottom of each page:
+Basic Headers and Footers
+
+Add a simple header: add_header("my_doc", 0, "My Document Title")  # Add to section 0
+Add a simple footer: add_footer("my_doc", 0, "Page X of Y")  # Add to section 0
+Remove a header: remove_header("my_doc", 0)  # Remove from section 0
+Remove a footer: remove_footer("my_doc", 0)  # Remove from section 0
+
+Three-Zone Headers and Footers
+Create headers/footers with left, center, and right aligned content:
+pythonCopyadd_zoned_header("my_doc", 0, 
+                "Left Text",      # Left-aligned
+                "Center Text",    # Center-aligned
+                "Right Text")     # Right-aligned
+
+add_zoned_footer("my_doc", 0, 
+                "Author: John Doe",  # Left-aligned
+                "Confidential",      # Center-aligned
+                "Page 1")            # Right-aligned
+Getting Header/Footer Content
+
+Get header text: get_header_text("my_doc", 0)  # From section 0
+Get footer text: get_footer_text("my_doc", 0)  # From section 0
+
+Analyzing Documents
 To understand a document's structure before modifying it:
-- `analyze_document_structure("my_doc")`
 
-## Converting to PDF
+analyze_document_structure("my_doc")
+
+Converting to PDF
 To convert a Word document to PDF format:
-- `convert_to_pdf("my_document")` - This will create a PDF with the same name in the server directory
 
-## Utility Functions
-- Check if a document exists: `check_document_exists("my_document")`
-- List all available documents: `list_available_documents()`
-- List available styles in a document: `list_styles("my_document")`
+convert_to_pdf("my_document") - This will create a PDF with the same name in the server directory
 
-## Tips for Working with Word Documents
-- Check if a document exists before trying to modify it
-- Use paragraph indexes carefully (they start at 0)
-- Remember that changes are saved immediately
-- Word styles can be used for consistent formatting
-- For complex documents, use analyze_document_structure() first
+Utility Functions
+
+Check if a document exists: check_document_exists("my_document")
+List all available documents: list_available_documents()
+List available styles in a document: list_styles("my_document")
+
+Tips for Working with Word Documents
+
+Check if a document exists before trying to modify it
+Use paragraph indexes carefully (they start at 0)
+Remember that changes are saved immediately
+Word styles can be used for consistent formatting
+For complex documents, use analyze_document_structure() first
+When changing orientation, you may need to explicitly set page dimensions
+Headers and footers are linked to sections, so create sections first if needed
 
 Remember to check the document path returned by create_document() to know where your files are stored.
 """
