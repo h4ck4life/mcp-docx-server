@@ -1,4 +1,3 @@
-# server.py
 from mcp.server.fastmcp import FastMCP, Context
 from docx import Document
 from docx.shared import Inches, Pt
@@ -8,13 +7,16 @@ from io import BytesIO
 import base64
 import os
 
-mcp = FastMCP("WordDocServer")
+# Create an MCP server specifically for Word document operations
+mcp = FastMCP("WordDocServer", 
+              description="An MCP server that allows reading and manipulating Microsoft Word (.docx) files. "
+                          "This server can create, read, and modify Word documents stored in the same directory as the script.")
 
-# Helper function to get the path to a document in the home directory
+# Helper function to get the path to a document in the same directory as the script
 def get_document_path(doc_id: str) -> str:
-    """Returns the full path to a document in the user's home directory."""
-    home_dir = os.path.expanduser("~")
-    return os.path.join(home_dir, f"{doc_id}.docx")
+    """Returns the full path to a document in the same directory as this script."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(script_dir, f"{doc_id}.docx")
 
 # Helper function to load a document safely
 def load_document(doc_id: str) -> Document:
@@ -28,9 +30,21 @@ def load_document(doc_id: str) -> Document:
         raise ValueError(f"Error loading document '{doc_id}.docx': {str(e)}")
 
 
-@mcp.resource("doc://{doc_id}/content")
+@mcp.resource("word://{doc_id}/content")
 def get_document_content(doc_id: str) -> str:
-    """Reads the content of a Word document and returns it as text."""
+    """Reads the content of a Microsoft Word (.docx) document and returns it as text.
+    
+    This resource allows directly reading Word documents by document ID.
+    
+    Example usage:
+    To read a file named "bitcoin_overview.docx", request: word://bitcoin_overview/content
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        
+    Returns:
+        str: The full text content of the document with paragraphs separated by newlines.
+    """
     try:
         document = load_document(doc_id)
         full_text = []
@@ -42,6 +56,55 @@ def get_document_content(doc_id: str) -> str:
     except Exception as e:
         return f"Unexpected error: {str(e)}"
 
+@mcp.tool()
+def read_document(doc_id: str) -> str:
+    """Reads the entire content of a Word document.
+    
+    This tool provides an easy way to read the contents of any .docx file
+    that exists in the server's directory.
+    
+    Example: To read "bitcoin_overview.docx", call this function with doc_id="bitcoin_overview"
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        
+    Returns:
+        str: The full text content of the document.
+    """
+    try:
+        document = load_document(doc_id)
+        full_text = []
+        for paragraph in document.paragraphs:
+            full_text.append(paragraph.text)
+        return '\n'.join(full_text)
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error reading document: {str(e)}"
+
+
+@mcp.tool()
+def check_document_exists(doc_id: str) -> str:
+    """Checks if a Word document exists and can be read.
+    
+    Args:
+        doc_id (str): The document ID (filename without extension).
+        
+    Returns:
+        str: A message indicating whether the document exists and is readable.
+    """
+    doc_path = get_document_path(doc_id)
+    try:
+        if os.path.exists(doc_path):
+            # Try to open and read the document to verify it's readable
+            document = Document(doc_path)
+            paragraph_count = len(document.paragraphs)
+            return f"Document '{doc_id}.docx' exists and is readable at path: {os.path.abspath(doc_path)}. Contains {paragraph_count} paragraphs."
+        else:
+            return f"Document '{doc_id}.docx' does not exist at path: {os.path.abspath(doc_path)}"
+    except Exception as e:
+        return f"Document '{doc_id}.docx' exists but cannot be read: {str(e)}"
+
 
 @mcp.tool()
 def create_document(doc_id: str, title: str = "New Document") -> str:
@@ -51,7 +114,7 @@ def create_document(doc_id: str, title: str = "New Document") -> str:
         document.add_heading(title, 0)
         doc_path = get_document_path(doc_id)
         document.save(doc_path)
-        return f"Document '{doc_id}.docx' created successfully in home directory."
+        return f"Document '{doc_id}.docx' created successfully at path: {os.path.abspath(doc_path)}"
     except Exception as e:
         return f"Error creating document: {str(e)}"
 
