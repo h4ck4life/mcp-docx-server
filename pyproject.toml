@@ -5,8 +5,12 @@ description = "MCP server for manipulating Word documents"
 dependencies = [
     "mcp[cli]",
     "python-docx",
+    "docx2pdf",
 ]
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[project.scripts]
+mcp-docx-server = "mcp_docx_server.server:mcp.run"
